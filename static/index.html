@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visualase GIF Extractor</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23123b5e'/><path d='M7 24 L22 9' stroke='%23ffdd00' stroke-width='3' stroke-linecap='round'/><circle cx='22' cy='9' r='4' fill='%23ff4040'/></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#123b5e"/><path d="M7 24 L22 9" stroke="#ffdd00" stroke-width="3" stroke-linecap="round"/><circle cx="22" cy="9" r="4" fill="#ff4040"/></svg>
+    <div>
+      <h1>Visualase GIF Extractor</h1>
+      <p>Point temperatures, laser status and distances from the laser fiber &middot; runs locally, files never leave this computer</p>
+    </div>
+  </div>
+  <label class="pixel" title="Millimetres per image pixel. Visualase 256x256 panels with a 260 mm field of view = 1.015625 mm.">
+    Pixel size <input id="pixelMm" type="number" step="0.000001" min="0.01" value="1.015625"> mm
+  </label>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <div id="drop" class="drop" tabindex="0" role="button" aria-label="Add GIF files">
+      <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path fill="currentColor" d="M19 15v4H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4zM11 4.8V16h2V4.8l3.6 3.6L18 7l-6-6-6 6 1.4 1.4z"/></svg>
+      <strong>Drop GIF files here</strong>
+      <span>or click to choose (several at once is fine)</span>
+      <input id="fileInput" type="file" accept=".gif,image/gif" multiple hidden>
+    </div>
+    <h2 class="side-h">Files</h2>
+    <ul id="jobList" class="joblist"><li class="muted small">No files yet</li></ul>
+    <button id="dlAll" class="btn ghost wide" disabled>Download all results (.zip)</button>
+  </aside>
+
+  <section class="content">
+    <div id="welcome" class="welcome">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li><b>Add GIFs</b> on the left. Each file is read frame by frame (time, laser power, the numbered points and their temperatures).</li>
+        <li><b>Check the fiber.</b> The laser fiber (the dark "stick") is found on the anatomy image. Drag its ends if needed &mdash; the center between skull entry and tip is the reference for distances.</li>
+        <li><b>Choose your output</b>: which data, which points, which frames, Excel or CSV &mdash; then <b>Run</b> and download.</li>
+        <li><b>Visualize</b> the GIF with the fiber, points and distances drawn on top, plus a temperature chart; export it as an annotated GIF.</li>
+      </ol>
+    </div>
+
+    <div id="jobView" class="jobview" hidden>
+      <div class="jobhead">
+        <div>
+          <h2 id="jvName"></h2>
+          <div id="jvFacts" class="facts"></div>
+        </div>
+        <div id="jvProgress" class="bigprogress" hidden><div class="bar"><i></i></div><span></span></div>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="fiber" class="active">1 &middot; Fiber</button>
+        <button role="tab" data-tab="output">2 &middot; Output</button>
+        <button role="tab" data-tab="viz">3 &middot; Visualize</button>
+      </nav>
+
+      <!-- FIBER -->
+      <div class="tabpanel" data-panel="fiber">
+        <p class="hint">Drag the <span class="sw g"></span>skull-entry and <span class="sw r"></span>tip handles onto the dark fiber line
+          (or press <b>Place by clicking</b>, then click the entry and then the tip). <b>Snap to line</b> fits the line precisely.
+          The <span class="sw c"></span>center is what distances are measured from. Fibers you save are remembered for this GIF.</p>
+        <div id="sliceCards" class="cards"></div>
+      </div>
+
+      <!-- OUTPUT -->
+      <div class="tabpanel" data-panel="output" hidden>
+        <div class="optgrid">
+          <fieldset>
+            <legend>Data to include</legend>
+            <label><input type="checkbox" name="field" value="status" checked> Time &amp; laser status <small>run, laser on/off, power %, watts</small></label>
+            <label><input type="checkbox" name="field" value="temps" checked> Temperatures (&deg;C)</label>
+            <label><input type="checkbox" name="field" value="limits" checked> Temperature limits <small>&lt;90 / &lt;50</small></label>
+            <label><input type="checkbox" name="field" value="positions" checked> Point positions <small>x, y in pixels</small></label>
+            <label><input type="checkbox" name="field" value="dist_center" checked> Distance to fiber <b>center</b> (mm)</label>
+            <label><input type="checkbox" name="field" value="dist_tip" checked> Distance to fiber <b>tip</b> (mm)</label>
+          </fieldset>
+          <fieldset>
+            <legend>Points <span class="mini"><a href="#" data-pts="all">all</a> &middot; <a href="#" data-pts="none">none</a></span></legend>
+            <div id="pointChecks" class="pointchecks"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Frames</legend>
+            <label><input type="radio" name="frames" value="all" checked> All frames</label>
+            <label><input type="radio" name="frames" value="laser_on"> Only frames with the laser on</label>
+            <label><input type="radio" name="frames" value="last_per_run"> Last frame of each run</label>
+            <label class="range"><input type="radio" name="frames" value="range"> Frames
+              <input id="fStart" type="number" min="0" value="0"> to <input id="fEnd" type="number" min="0" value="0"></label>
+          </fieldset>
+          <fieldset>
+            <legend>File format</legend>
+            <label><input type="radio" name="fmt" value="xlsx" checked> Excel (.xlsx) <small>summary + per-frame sheet, live distance formulas</small></label>
+            <label><input type="radio" name="fmt" value="csv"> CSV (.zip) <small>frame data, distance summary, fiber</small></label>
+          </fieldset>
+        </div>
+        <div class="runbar">
+          <button id="runBtn" class="btn primary">Run</button>
+          <span id="runMsg" class="muted"></span>
+        </div>
+        <div id="results" hidden>
+          <div class="resulthead">
+            <h3>Distance from the fiber center</h3>
+            <a id="dlLink" class="btn" href="#" download>Download</a>
+          </div>
+          <div class="tablewrap"><table id="resTable" class="restable"></table></div>
+        </div>
+      </div>
+
+      <!-- VISUALIZE -->
+      <div class="tabpanel" data-panel="viz" hidden>
+        <div class="vizbar">
+          <button id="vPrev" class="btn icon" title="Previous frame (Left arrow)">&#9664;&#9664;</button>
+          <button id="vPlay" class="btn icon primary" title="Play / pause (Space)">&#9654;</button>
+          <button id="vNext" class="btn icon" title="Next frame (Right arrow)">&#9654;&#9654;</button>
+          <input id="vSlider" type="range" min="0" max="0" value="0" aria-label="Frame">
+          <span id="vLabel" class="vlabel"></span>
+          <select id="vSpeed" title="Playback speed">
+            <option value="0.5">0.5&times;</option><option value="1" selected>1&times;</option>
+            <option value="2">2&times;</option><option value="4">4&times;</option><option value="8">8&times;</option>
+          </select>
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" data-show="fiber" checked> Fiber</label>
+          <label><input type="checkbox" data-show="center" checked> Center</label>
+          <label><input type="checkbox" data-show="tip" checked> Tip</label>
+          <label><input type="checkbox" data-show="points" checked> Points</label>
+          <label><input type="checkbox" data-show="lines" checked> Distance lines</label>
+          <label><input type="checkbox" data-show="labels" checked> Labels</label>
+          <label><input type="checkbox" id="vOriginal"> Original only</label>
+        </div>
+        <div class="vizmain">
+          <div class="stage"><canvas id="vCanvas"></canvas></div>
+          <div class="readout">
+            <div id="vStatus" class="vstatus"></div>
+            <table id="vTable" class="vtable"></table>
+            <div class="exportgif">
+              <h4>Annotated GIF</h4>
+              <label>Size <select id="gScale"><option value="2" selected>2&times; (sharper)</option><option value="1">1&times; (smaller file)</option></select></label>
+              <label>Frames <select id="gStep"><option value="1" selected>every frame</option><option value="2">every 2nd</option><option value="5">every 5th</option></select></label>
+              <button id="gBtn" class="btn">Create annotated GIF</button>
+              <div id="gProg" class="bar small" hidden><i></i></div>
+              <a id="gLink" class="btn primary" hidden download>Download annotated GIF</a>
+            </div>
+          </div>
+        </div>
+        <div class="chartwrap">
+          <div class="charthead"><h4>Temperature over time</h4><span class="muted small">click the chart to jump to a frame &middot; shaded = laser on &middot; dashed = new run</span></div>
+          <canvas id="vChart" height="240"></canvas>
+          <div id="vLegend" class="legend"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <a href="https://vatsapatel.com/" target="_blank" rel="noopener"><span class="code" aria-hidden="true">&lt;/&gt;</span> Built by vatsapatel.com</a>
+</footer>
+
+<dialog id="readyDlg" class="dlg">
+  <h3>Your results are ready</h3>
+  <p id="readyText"></p>
+  <div class="dlgbtns">
+    <button id="readyLater" class="btn ghost">Not now</button>
+    <a id="readyDl" class="btn primary" href="#" download>Download</a>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

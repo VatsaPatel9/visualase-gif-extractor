@@ -1,0 +1,14 @@
+# local environment
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# never commit imaging data or results
+data/
+*.gif
+*.dcm
+*.zip
+*.xlsx
+*.csv
+visualase_results/

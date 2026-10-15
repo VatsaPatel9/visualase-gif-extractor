@@ -1,0 +1,5 @@
+flask>=3.0
+numpy>=1.26
+scipy>=1.11
+pillow>=10.1
+openpyxl>=3.1
