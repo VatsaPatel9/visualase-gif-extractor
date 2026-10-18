@@ -136,26 +136,35 @@ def _resolve_cluster(mag, comp, expected):
 
 
 LEGEND_LOOSE_RE = re.compile(r'^(\d+)\s+(-?\d+\.\d|--\.-)\s+<(\d{2,3})(?![\d])')
+# label and temperature readable, limit hidden (e.g. white "<90" drawn over bright white anatomy)
+LEGEND_NOLIMIT_RE = re.compile(r'^(\d{1,2})\s+(-?\d+\.\d|--\.-)(?=[\s?]|$)')
 
 
 def _legend_lines(mask, lines):
     """Legend lines ("<label>  <temp> <<limit>") among grouped glyph runs of one colour.
 
     A run that starts like a legend line but fails the strict parse (e.g. its "<90" runs over bright
-    image pixels) is re-read cell by cell with a tolerant matcher. Returns [(y, x0, label, temp, limit, cells)].
+    image pixels) is re-read cell by cell with a tolerant matcher. If the label and temperature read
+    cleanly but the limit is hidden, the line is kept with limit None (filled in later from other frames).
+    Returns [(y, x0, label, temp, limit, cells)].
     """
     out = []
     for y, x0, s, items in lines:
         m = LEGEND_RE.match(s)
         cells = [(y, xx, ch) for xx, ch in items]
+        limit_hidden = False
         if not m and re.match(r'^\d+\s+[-\d]', s):
             txt = read_line(mask, y, x0)
             m = LEGEND_LOOSE_RE.match(txt)
+            if not m:
+                m = LEGEND_NOLIMIT_RE.match(txt)
+                limit_hidden = m is not None
             if m:
                 cells = [(y, x0 + 6 * k, ch) for k, ch in enumerate(txt[:m.end()]) if ch in TEMPLATES]
         if m:
             temp = m.group(2)
-            out.append((y, x0, int(m.group(1)), None if '-' in temp else float(temp), int(m.group(3)), cells))
+            lim = None if limit_hidden else int(m.group(3))
+            out.append((y, x0, int(m.group(1)), None if '-' in temp else float(temp), lim, cells))
     return out
 
 

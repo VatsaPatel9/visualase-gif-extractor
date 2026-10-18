@@ -257,6 +257,7 @@ class Job:
         for f, gsel in zip(self.frames, frame_group):
             f['slice'] = {str(r): sid[(r, remap[(r, gi)])] for r, gi in gsel.items()}
         self._assign_runs()
+        self._fill_hidden_limits()
         self.point_keys = sorted({k for f in self.frames for k in f['points']},
                                  key=lambda k: tuple(int(v) for v in k.split(':')))
 
@@ -342,6 +343,27 @@ class Job:
                     rec['notes'].append(f'Point {lab}: over its limit (drawn in white)')
                 rec['points'][f'{r}:{lab}'] = [temp, lim, x, y]
         return rec
+
+    def _fill_hidden_limits(self):
+        """A point's limit can be hidden when its (white) "<90" is drawn over bright white anatomy.
+        Limits do not change for a point, so take it from the nearest frame where it was readable."""
+        known = {}
+        for f in self.frames:
+            for k, v in f['points'].items():
+                if v[1] is not None:
+                    known.setdefault(k, []).append(f['frame'])
+        for f in self.frames:
+            for k, v in f['points'].items():
+                if v[1] is not None:
+                    continue
+                lab = k.split(':')[1]
+                src = known.get(k)
+                if not src:
+                    f['notes'].append(f'Point {lab}: limit hidden behind the image and not readable in any frame')
+                    continue
+                n = min(src, key=lambda i: (abs(i - f['frame']), i))
+                v[1] = self.frames[n]['points'][k][1]
+                f['notes'].append(f'Point {lab}: limit hidden behind the image - taken from frame {n}')
 
     def _assign_runs(self):
         run, prev = 1, None

@@ -61,7 +61,7 @@ Results go to `./visualase_results/` (change with `--out`). Fibers that were fou
 * **Text:** the Visualase overlay uses a fixed 6×10 pixel font, so every character is matched exactly against bitmap templates rather than guessed by OCR.
 * **Status line:** read from the bottom row of the image. A built-in cross-check confirms that watts = 15 W × power %.
 * **Point positions:** taken as the center of the magenta point number on the temperature image (±2 px). Labels drawn on top of each other are separated automatically.
-* **Points over their limit:** while a reading is at or over its limit, Visualase draws that point's legend line and number in white instead of magenta. Those are read too, and the frame gets an "over its limit" note.
+* **Points over their limit:** while a reading is at or over its limit, Visualase draws that point's legend line and number in white instead of magenta. Those are read too, and the frame gets an "over its limit" note. If the white "<90" falls on bright white anatomy and can't be seen, the point's limit is taken from the nearest frame where it was readable (also noted).
 * **Pixel size:** 1.015625 mm per pixel. That is the DICOM PixelSpacing of the Visualase planning *T1 SE* series (256×256, 260 mm FOV), and the GIF anatomy matches those slices pixel-for-pixel. You can change it in the top-right box or in the Excel *Summary* sheet.
 * **Distances:** 2D distances within the slice where the point is drawn.
 * **Excel layout:** the workbook keeps distances as formulas. If you edit the fiber coordinates (blue cells) or the pixel size, every distance updates.

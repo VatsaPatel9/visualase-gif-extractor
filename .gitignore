@@ -12,3 +12,9 @@ data/
 *.xlsx
 *.csv
 visualase_results/
+OneDrive*/
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.HEIC
