@@ -157,6 +157,33 @@
   </section>
 </main>
 
+<div id="fs" class="fs" hidden>
+  <div class="fsbar">
+    <div class="fstitle"><strong id="fsTitle"></strong> <span id="fsSrc"></span></div>
+    <div class="fsbtns">
+      <button class="btn small" data-fs="place">Place by clicking</button>
+      <button class="btn small" data-fs="snap" title="Fit the line exactly onto the dark fiber">Snap to line</button>
+      <button class="btn small" data-fs="auto">Auto-detect</button>
+      <button class="btn small primary" data-fs="save">Save</button>
+      <span class="fssep"></span>
+      <button class="btn small icon" data-fs="zoomout" title="Zoom out (-)">&minus;</button>
+      <span id="fsZoom" class="fszoom">100%</span>
+      <button class="btn small icon" data-fs="zoomin" title="Zoom in (+)">+</button>
+      <button class="btn small" data-fs="fit" title="Fit to screen (0)">Fit</button>
+      <label class="fscheck" title="Fill the whole screen; pixels are stretched but clicks stay exact"><input type="checkbox" id="fsStretch"> Stretch to fill</label>
+      <label class="fscheck" title="Show where the numbered points are"><input type="checkbox" id="fsPoints" checked> Points</label>
+      <span class="fssep"></span>
+      <button class="btn small" data-fs="close">Exit full screen (Esc)</button>
+    </div>
+  </div>
+  <div class="fsmain"><canvas id="fsCanvas"></canvas><div id="fsHint" class="fshint" hidden></div></div>
+  <div class="fsfoot">
+    <span id="fsCoords"></span>
+    <span id="fsCursor" class="fscursor"></span>
+    <span class="fshelp">Scroll to zoom &middot; drag empty space to pan &middot; drag a handle, or click it and nudge with the arrow keys (Shift = 2 px)</span>
+  </div>
+</div>
+
 <dialog id="readyDlg" class="dlg">
   <h3>Your results are ready</h3>
   <p id="readyText"></p>

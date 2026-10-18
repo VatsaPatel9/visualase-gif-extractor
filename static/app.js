@@ -13,6 +13,7 @@ const state = {
   fibers: {},           // slice idx -> {entry:[x,y], tip:[x,y], dirty, source}
   anat: {},             // slice idx -> HTMLImageElement
   tab: 'fiber',
+  placing: null,        // slice idx while "Place by clicking" is waiting for clicks
   poll: null,
   viz: { frame: 0, playing: false, timer: null, images: new Map(), show: {}, hidden: new Set(), scale: 2 },
 };
@@ -222,6 +223,7 @@ function renderFiberCards() {
       <canvas class="fcanvas" width="768" height="768"></canvas>
       <div class="coords"></div>
       <div class="btns">
+        <button class="btn small" data-act="full" title="Open this slice full screen for precise clicking (or double-click the image)">&#x26F6; Full screen</button>
         <button class="btn small" data-act="place">Place by clicking</button>
         <button class="btn small" data-act="snap" title="Fit the line exactly onto the dark fiber">Snap to line</button>
         <button class="btn small" data-act="auto">Auto-detect</button>
@@ -243,6 +245,7 @@ function renderFiberCards() {
 }
 
 function updateCardMeta(idx) {
+  if (fs.idx === idx) { drawFs(); updateFsMeta(); }
   const card = $(`.card[data-idx="${idx}"]`);
   if (!card) return;
   const f = state.fibers[idx];
@@ -259,6 +262,7 @@ function drawFiberCanvas(idx) {
   const img = state.anat[idx];
   if (!card || !img || !img.complete) return;
   const cv = $('canvas', card);
+  cv.classList.toggle('placing', state.placing === idx);
   const ctx = cv.getContext('2d');
   const k = cv.width / 256;
   ctx.imageSmoothingEnabled = false;
@@ -306,14 +310,8 @@ function bindFiberCanvas(card, s) {
   cv.addEventListener('pointerdown', (e) => {
     const f = state.fibers[s.idx];
     const p = toImg(e);
-    if (cv.classList.contains('placing')) {
-      if (!f.entry || f.tip) { f.entry = p; f.tip = null; toast('Now click the fiber tip'); }
-      else {
-        f.tip = p;
-        cv.classList.remove('placing');
-        fiberAction(s.idx, 'snap');
-      }
-      f.dirty = true; drawFiberCanvas(s.idx); updateCardMeta(s.idx);
+    if (state.placing === s.idx) {
+      placeClick(s.idx, p, true);
       return;
     }
     const g = geom(s.idx);
@@ -328,7 +326,7 @@ function bindFiberCanvas(card, s) {
   cv.addEventListener('pointermove', (e) => {
     if (!drag) {
       const g = geom(s.idx);
-      if (g && !cv.classList.contains('placing')) {
+      if (g && state.placing !== s.idx) {
         const p = toImg(e);
         const tol = (14 / cv.getBoundingClientRect().width) * 256;
         cv.style.cursor = Math.min(dist(p, g.E), dist(p, g.T)) <= tol ? 'grab' : 'crosshair';
@@ -343,18 +341,34 @@ function bindFiberCanvas(card, s) {
   const end = () => { drag = null; };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
+  cv.addEventListener('dblclick', () => openFs(s.idx));
+}
+
+/* "Place by clicking": first click = skull entry, second click = tip. */
+function placeClick(idx, p, autoSnap) {
+  const f = state.fibers[idx];
+  if (!f.entry || f.tip) {
+    f.entry = p; f.tip = null;
+    if (fs.idx !== idx) toast('Now click the fiber tip');
+  } else {
+    f.tip = p;
+    state.placing = null;
+    if (autoSnap) fiberAction(idx, 'snap');
+  }
+  f.dirty = true;
+  drawFiberCanvas(idx); updateCardMeta(idx);
 }
 
 async function fiberAction(idx, act, btn) {
   const j = job();
   const f = state.fibers[idx];
-  const card = $(`.card[data-idx="${idx}"]`);
   try {
+    if (act === 'full') { openFs(idx); return; }
     if (act === 'place') {
-      $('canvas', card).classList.add('placing');
+      state.placing = idx;
       f.entry = null; f.tip = null;
       drawFiberCanvas(idx); updateCardMeta(idx);
-      toast('Click the skull entry point, then the fiber tip');
+      if (fs.idx !== idx) toast('Click the skull entry point, then the fiber tip');
       return;
     }
     if (btn) btn.disabled = true;
@@ -391,6 +405,268 @@ async function saveFiber(idx) {
 
 async function saveDirtyFibers() {
   for (const [idx, f] of Object.entries(state.fibers)) if (f.dirty && f.entry && f.tip) await saveFiber(+idx);
+}
+
+/* ------------------------------------------------------------------ full-screen fiber editor */
+// View transform: image pixel (u, v) is drawn at screen (ox + u*sx, oy + v*sy) in CSS pixels.
+const fs = { idx: null, sx: 1, sy: 1, ox: 0, oy: 0, fit: 1, w: 0, h: 0, drag: null, sel: null };
+
+function openFs(idx) {
+  fs.idx = idx; fs.sel = null; fs.drag = null;
+  const el = $('#fs');
+  el.hidden = false;
+  document.body.style.overflow = 'hidden';
+  if (el.requestFullscreen && !document.fullscreenElement) el.requestFullscreen().catch(() => { /* overlay still fills the window */ });
+  fitFs();
+  updateFsMeta();
+  requestAnimationFrame(fitFs);       // again once the full-screen layout has settled
+}
+
+function closeFs() {
+  if (fs.idx === null) return;
+  const idx = fs.idx;
+  fs.idx = null;
+  $('#fs').hidden = true;
+  document.body.style.overflow = '';
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  drawFiberCanvas(idx);
+  updateCardMeta(idx);
+}
+
+function fsSize() {
+  const cv = $('#fsCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  fs.w = w; fs.h = h;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+  }
+  return { w, h, dpr };
+}
+
+function fitFs() {
+  if (fs.idx === null) return;
+  const { w, h } = fsSize();
+  if ($('#fsStretch').checked) {
+    fs.sx = w / 256; fs.sy = h / 256; fs.ox = 0; fs.oy = 0;
+  } else {
+    const k = Math.min(w, h) / 256;
+    fs.sx = fs.sy = k; fs.ox = (w - 256 * k) / 2; fs.oy = (h - 256 * k) / 2;
+  }
+  fs.fit = Math.min(fs.sx, fs.sy);
+  drawFs();
+}
+
+/* Window resized: keep the zoom level and the image point at the centre of the view. */
+function resizeFs() {
+  if (fs.idx === null) return;
+  const z = Math.min(fs.sx, fs.sy) / fs.fit;
+  const c = fsImg(fs.w / 2, fs.h / 2);
+  fitFs();
+  if (z > 1.001) {
+    zoomFs(z);
+    const [x, y] = fsP(c);
+    fs.ox += fs.w / 2 - x;
+    fs.oy += fs.h / 2 - y;
+    drawFs();
+  }
+}
+
+function zoomFs(factor, mx, my) {
+  const { w, h } = fsSize();
+  if (mx === undefined) { mx = w / 2; my = h / 2; }
+  const cur = Math.min(fs.sx, fs.sy) / fs.fit;
+  const target = Math.min(16, Math.max(1, cur * factor));
+  if (target === 1) { fitFs(); return; }
+  const f = target / cur;
+  fs.ox = mx - (mx - fs.ox) * f;
+  fs.oy = my - (my - fs.oy) * f;
+  fs.sx *= f; fs.sy *= f;
+  drawFs();
+}
+
+const fsP = (q) => [fs.ox + (q[0] + 0.5) * fs.sx, fs.oy + (q[1] + 0.5) * fs.sy];
+const fsImg = (mx, my) => [Math.min(255.9, Math.max(0, (mx - fs.ox) / fs.sx - 0.5)),
+                            Math.min(255.9, Math.max(0, (my - fs.oy) / fs.sy - 0.5))];
+function fsMouse(e) {
+  const r = $('#fsCanvas').getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+
+function drawFs() {
+  if (fs.idx === null) return;
+  const idx = fs.idx;
+  const cv = $('#fsCanvas');
+  const { w, h, dpr } = fsSize();
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+  const img = state.anat[idx];
+  if (img && img.complete) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, fs.ox, fs.oy, 256 * fs.sx, 256 * fs.sy);
+  }
+  if (Math.min(fs.sx, fs.sy) >= 10) {          // pixel grid once single pixels are big enough to see
+    const u0 = Math.max(0, Math.floor(-fs.ox / fs.sx)), u1 = Math.min(256, Math.ceil((w - fs.ox) / fs.sx));
+    const v0 = Math.max(0, Math.floor(-fs.oy / fs.sy)), v1 = Math.min(256, Math.ceil((h - fs.oy) / fs.sy));
+    ctx.strokeStyle = 'rgba(255,255,255,.09)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let u = u0; u <= u1; u++) { const x = Math.round(fs.ox + u * fs.sx) + 0.5; ctx.moveTo(x, fs.oy + v0 * fs.sy); ctx.lineTo(x, fs.oy + v1 * fs.sy); }
+    for (let v = v0; v <= v1; v++) { const y = Math.round(fs.oy + v * fs.sy) + 0.5; ctx.moveTo(fs.ox + u0 * fs.sx, y); ctx.lineTo(fs.ox + u1 * fs.sx, y); }
+    ctx.stroke();
+  }
+  const s = job().slices[idx];
+  if ($('#fsPoints').checked) {                 // point labels as small fixed-size guides
+    ctx.font = '600 12px sans-serif';
+    ctx.globalAlpha = 0.85;
+    for (const p of slicePoints(idx, s.row)) {
+      const [x, y] = fsP([p.x, p.y]);
+      ctx.strokeStyle = C.point; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, 6, 0, 7); ctx.stroke();
+      ctx.fillStyle = C.point; ctx.fillText(p.key.split(':')[1], x + 8, y - 5);
+    }
+    ctx.globalAlpha = 1;
+  }
+  const f = state.fibers[idx];
+  const g = geom(idx);
+  if (g) {
+    ctx.strokeStyle = C.fiber; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(...fsP(g.E)); ctx.lineTo(...fsP(g.T)); ctx.stroke();
+    const [cx, cy] = fsP(g.C);
+    ctx.strokeStyle = C.center; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(cx, cy, 8, 0, 7); ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - 14, cy); ctx.lineTo(cx + 14, cy); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy + 14); ctx.stroke();
+    ctx.fillStyle = C.center; ctx.font = 'bold 13px sans-serif'; ctx.fillText('center', cx + 12, cy - 12);
+  }
+  for (const [key, color, letter] of [['entry', C.entry, 'E'], ['tip', C.tip, 'T']]) {
+    const q = f[key];
+    if (!q) continue;
+    const [x, y] = fsP(q);
+    ctx.globalAlpha = 0.28; ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1; ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.stroke();
+    ctx.fillStyle = '#fff';                     // exact point
+    ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill();
+    if (fs.sel === key) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 15, 0, 7); ctx.stroke(); }
+    ctx.fillStyle = color; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(letter, x, y - 19);
+    ctx.textAlign = 'start';
+  }
+  const hint = $('#fsHint');
+  hint.hidden = state.placing !== idx;
+  if (!hint.hidden) hint.textContent = !f.entry || f.tip ? 'Click the skull entry point' : 'Now click the fiber tip';
+  $('#fsZoom').textContent = `${Math.round((Math.min(fs.sx, fs.sy) / fs.fit) * 100)}%`;
+}
+
+function updateFsMeta() {
+  if (fs.idx === null) return;
+  const idx = fs.idx;
+  const card = $(`.card[data-idx="${idx}"]`);
+  $('#fsTitle').textContent = card ? $('input', card).value : job().slices[idx].label;
+  $('#fsSrc').innerHTML = sourceChip(state.fibers[idx]);
+  const g = geom(idx);
+  const xy = (q) => `${q[0].toFixed(1)}, ${q[1].toFixed(1)}`;
+  $('#fsCoords').innerHTML = g
+    ? `Entry (${xy(g.E)}) &middot; Tip (${xy(g.T)}) &middot; <b>Center (${xy(g.C)})</b> &middot; length ${fmt1(dist(g.E, g.T) * pixelMm())} mm`
+    : 'No fiber yet &ndash; press <b>Place by clicking</b>';
+}
+
+function bindFs() {
+  const cv = $('#fsCanvas');
+  cv.addEventListener('pointerdown', (e) => {
+    if (fs.idx === null) return;
+    const idx = fs.idx;
+    const f = state.fibers[idx];
+    const [mx, my] = fsMouse(e);
+    if (state.placing === idx) { placeClick(idx, fsImg(mx, my), false); return; }
+    let hit = null, best = 16;
+    for (const key of ['entry', 'tip']) {
+      if (!f[key]) continue;
+      const [x, y] = fsP(f[key]);
+      const d = Math.hypot(x - mx, y - my);
+      if (d <= best) { best = d; hit = key; }
+    }
+    cv.setPointerCapture(e.pointerId);
+    if (hit) {
+      const [x, y] = fsP(f[hit]);
+      fs.sel = hit;
+      fs.drag = { type: 'handle', key: hit, dx: x - mx, dy: y - my };   // keep the grab offset: no jump
+    } else {
+      fs.sel = null;
+      fs.drag = { type: 'pan', mx, my, ox: fs.ox, oy: fs.oy };
+      cv.style.cursor = 'grabbing';
+    }
+    drawFs();
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (fs.idx === null) return;
+    const [mx, my] = fsMouse(e);
+    const p = fsImg(mx, my);
+    $('#fsCursor').textContent = `cursor x ${p[0].toFixed(1)}, y ${p[1].toFixed(1)}`;
+    const d = fs.drag;
+    if (!d) {
+      const f = state.fibers[fs.idx];
+      const near = ['entry', 'tip'].some((k) => f[k] && Math.hypot(fsP(f[k])[0] - mx, fsP(f[k])[1] - my) <= 16);
+      cv.style.cursor = state.placing === fs.idx ? 'crosshair' : near ? 'grab' : 'crosshair';
+      return;
+    }
+    if (d.type === 'pan') {
+      fs.ox = d.ox + (mx - d.mx);
+      fs.oy = d.oy + (my - d.my);
+      drawFs();
+    } else {
+      const f = state.fibers[fs.idx];
+      f[d.key] = fsImg(mx + d.dx, my + d.dy);
+      f.dirty = true;
+      drawFiberCanvas(fs.idx); updateCardMeta(fs.idx);
+    }
+  });
+  const end = () => { fs.drag = null; cv.style.cursor = 'crosshair'; };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', end);
+  cv.addEventListener('wheel', (e) => {
+    if (fs.idx === null) return;
+    e.preventDefault();
+    const [mx, my] = fsMouse(e);
+    zoomFs(Math.exp(-e.deltaY * 0.0015), mx, my);
+  }, { passive: false });
+  $$('[data-fs]').forEach((b) => b.addEventListener('click', () => {
+    const act = b.dataset.fs;
+    if (fs.idx === null) return;
+    if (act === 'close') closeFs();
+    else if (act === 'zoomin') zoomFs(1.5);
+    else if (act === 'zoomout') zoomFs(1 / 1.5);
+    else if (act === 'fit') fitFs();
+    else fiberAction(fs.idx, act, b);
+  }));
+  $('#fsStretch').addEventListener('change', () => { store('vx.fsStretch', $('#fsStretch').checked ? '1' : ''); fitFs(); });
+  $('#fsPoints').addEventListener('change', drawFs);
+  $('#fsStretch').checked = load('vx.fsStretch') === '1';
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && fs.idx !== null) closeFs();
+  });
+  window.addEventListener('resize', resizeFs);
+  document.addEventListener('keydown', (e) => {
+    if (fs.idx === null) return;
+    const f = state.fibers[fs.idx];
+    if (e.key === 'Escape') { e.preventDefault(); if (state.placing === fs.idx) { state.placing = null; drawFs(); } else closeFs(); return; }
+    if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomFs(1.5); return; }
+    if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomFs(1 / 1.5); return; }
+    if (e.key === '0') { e.preventDefault(); fitFs(); return; }
+    const step = e.shiftKey ? 2 : 0.5;
+    const mv = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (mv && fs.sel && f[fs.sel]) {
+      e.preventDefault();
+      const q = f[fs.sel];
+      f[fs.sel] = [Math.min(255.9, Math.max(0, q[0] + mv[0])), Math.min(255.9, Math.max(0, q[1] + mv[1]))];
+      f.dirty = true;
+      drawFiberCanvas(fs.idx); updateCardMeta(fs.idx);
+    }
+  });
 }
 
 /* ------------------------------------------------------------------ output */
@@ -587,7 +863,7 @@ function renderReadout(f) {
       const dc = g && q ? dist(q, g.C) * pixelMm() : null;
       const dt = g && q ? dist(q, g.T) * pixelMm() : null;
       return `<tr><td><span class="dot" style="background:${seriesColor(k)}"></span>${esc(pointName(k, rows).replace('Point ', ''))}</td>
-        <td class="num">${v[0] === null ? '--.-' : v[0].toFixed(1)}°</td><td class="num">&lt;${v[1]}</td>
+        <td class="num${v[0] !== null && v[0] >= v[1] ? ' over' : ''}" ${v[0] !== null && v[0] >= v[1] ? 'title="At or over its limit"' : ''}>${v[0] === null ? '--.-' : v[0].toFixed(1)}°</td><td class="num">&lt;${v[1]}</td>
         <td class="num">${fmt1(dc)}</td><td class="num">${fmt1(dt)}</td></tr>`;
     }).join('') + '<tr><td colspan="5" class="small muted">distances in mm</td></tr>'
     : '<tr><td class="muted small">No numbered points on this frame.</td></tr>';
@@ -735,6 +1011,7 @@ async function downloadAll() {
 
 /* ------------------------------------------------------------------ wiring */
 function wire() {
+  bindFs();
   const drop = $('#drop');
   const input = $('#fileInput');
   drop.addEventListener('click', () => input.click());

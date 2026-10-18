@@ -30,6 +30,10 @@ Requires Python 3.10+ (tested with 3.14). If LibreOffice is installed, exported 
    * *Auto – please check*: found automatically. The tip is found from where tissue heats while the laser is on. Check that the **E** (skull entry) and **T** (tip) handles sit on the fiber.
    * Drag the handles, or press **Place by clicking** and click the entry, then the tip. **Snap to line** fits the line exactly onto the dark fiber.
    * **Save** remembers the fiber for this GIF, keyed by file content, so re-uploading it later starts from your review.
+   * **Full screen** (or double-click the image) opens the slice on the whole screen for precise placement:
+     * scroll to zoom (up to 16×) and drag empty space to pan; a pixel grid appears when zoomed in;
+     * drag a handle, or click it and nudge it with the arrow keys (0.5 px steps, Shift for 2 px);
+     * **Stretch to fill** uses the whole screen (pixels are stretched, clicks stay exact). Press `Esc` to go back.
 3. **2 · Output.** Choose:
    * **Data:** time and laser status, temperatures, limits, positions, distance to center, distance to tip.
    * **Points:** all, or any subset.
@@ -57,6 +61,7 @@ Results go to `./visualase_results/` (change with `--out`). Fibers that were fou
 * **Text:** the Visualase overlay uses a fixed 6×10 pixel font, so every character is matched exactly against bitmap templates rather than guessed by OCR.
 * **Status line:** read from the bottom row of the image. A built-in cross-check confirms that watts = 15 W × power %.
 * **Point positions:** taken as the center of the magenta point number on the temperature image (±2 px). Labels drawn on top of each other are separated automatically.
+* **Points over their limit:** while a reading is at or over its limit, Visualase draws that point's legend line and number in white instead of magenta. Those are read too, and the frame gets an "over its limit" note.
 * **Pixel size:** 1.015625 mm per pixel. That is the DICOM PixelSpacing of the Visualase planning *T1 SE* series (256×256, 260 mm FOV), and the GIF anatomy matches those slices pixel-for-pixel. You can change it in the top-right box or in the Excel *Summary* sheet.
 * **Distances:** 2D distances within the slice where the point is drawn.
 * **Excel layout:** the workbook keeps distances as formulas. If you edit the fiber coordinates (blue cells) or the pixel size, every distance updates.

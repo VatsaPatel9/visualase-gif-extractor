@@ -77,3 +77,47 @@ def find_glyphs(mask, chars=LEGEND_CHARS, strict=True):
         ys, xs = np.nonzero(ok[:H + 1, :W + 1])
         out.extend((int(y), int(x), ch) for y, x in zip(ys, xs))
     return out
+
+
+def find_relaxed(mask, ch, max_extra=1):
+    """Placements where every pixel of glyph `ch` is set in `mask` and at most `max_extra` other
+    pixels inside its 10x5 cell are set. Finds labels drawn over bright image areas (no clear margin)
+    while rejecting uniformly bright regions, where any glyph would 'fit'.
+
+    Returns a list of (y, x, extra) with (y, x) the cell's top-left pixel.
+    """
+    t = TEMPLATES[ch]
+    n = int(t.sum())
+    H, W = mask.shape
+    pad = np.zeros((H + 10, W + 5), dtype=np.int32)
+    pad[:H, :W] = mask
+    hits = ndimage.correlate(pad, t.astype(np.int32), mode='constant', origin=(-5, -2))
+    box = ndimage.correlate(pad, np.ones((10, 5), dtype=np.int32), mode='constant', origin=(-5, -2))
+    ok = (hits == n) & (box - n <= max_extra)
+    ys, xs = np.nonzero(ok[:H - 9, :W - 4])
+    return [(int(y), int(x), int(box[y, x] - n)) for y, x in zip(ys, xs)]
+
+
+def read_line(mask, y, x0, n_cells=12, chars=LEGEND_CHARS, max_extra=4):
+    """Best-fit read of a grid-aligned text line (6-px cells from x0, top row y).
+
+    A cell is accepted when all glyph pixels are present and only a few stray pixels (from the image
+    behind the text) are extra; otherwise it reads as '?'. Blank cells read as ' '.
+    """
+    out = []
+    for c in range(n_cells):
+        cell = mask[y:y + 10, x0 + 6 * c:x0 + 6 * c + 5]
+        if cell.shape != (10, 5) or not cell.any():
+            out.append(' ')
+            continue
+        best = None
+        for ch in chars:
+            t = TEMPLATES[ch]
+            miss = int((t & ~cell).sum())
+            extra = int((~t & cell).sum())
+            score = miss * 3 + extra
+            if best is None or score < best[0]:
+                best = (score, ch, miss, extra)
+        _, ch, miss, extra = best
+        out.append(ch if miss == 0 and extra <= max_extra else '?')
+    return ''.join(out).rstrip()

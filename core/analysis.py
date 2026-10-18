@@ -176,6 +176,7 @@ class Job:
         self.rows = self.height // PANEL
         self.anat_col = 1 if self.width >= 2 * PANEL else 0
         groups = {r: [] for r in range(self.rows)}   # per row: list of dicts(sum, cnt, hot, n, frames)
+        hints = {}                                    # per row: where each point label was last seen
         frame_group = []
         for i in range(self.n_frames):
             im.seek(i)
@@ -185,7 +186,11 @@ class Job:
             rgb.save(buf, 'PNG', compress_level=1)
             self.frame_png.append(buf.getvalue())
             a = np.asarray(rgb).astype(np.int32)
-            status, panels = analyze_frame(a)
+            status, panels = analyze_frame(a, hints)
+            for r, p in panels.items():
+                for lab, pos in p['markers'].items():
+                    if len(pos) == 1:
+                        hints.setdefault(r, {})[lab] = pos[0][:2]
             gsel = {}
             for r in range(self.rows):
                 an = a[r * PANEL:(r + 1) * PANEL, self.anat_col * PANEL:(self.anat_col + 1) * PANEL].astype(np.float32)
@@ -333,6 +338,8 @@ class Job:
                     rec['notes'].append(f'Point {lab}: label hidden/overlapped on the image; position not readable')
                 if temp is None:
                     rec['notes'].append(f'Point {lab}: temperature shown as "--.-" (no reading)')
+                if lab in p.get('alarm', ()):
+                    rec['notes'].append(f'Point {lab}: over its limit (drawn in white)')
                 rec['points'][f'{r}:{lab}'] = [temp, lim, x, y]
         return rec
 

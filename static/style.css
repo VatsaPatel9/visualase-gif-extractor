@@ -161,6 +161,7 @@ fieldset label.range input[type=number] { width: 68px; padding: 3px 6px; }
 .vtable th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11.5px; border-bottom: 1px solid var(--line); padding: 3px 4px; }
 .vtable td { padding: 4px; border-bottom: 1px solid #eef1f5; }
 .vtable td.num { text-align: right; }
+.vtable td.over { color: var(--err); font-weight: 700; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
 .exportgif { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .exportgif label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
@@ -169,6 +170,26 @@ fieldset label.range input[type=number] { width: 68px; padding: 3px 6px; }
 #vChart { width: 100%; height: 240px; display: block; cursor: pointer; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; margin-top: 6px; }
 .legend label { cursor: pointer; }
+
+/* full-screen fiber editor */
+.fs { position: fixed; inset: 0; z-index: 40; background: #0b0f14; color: #dfe6ee; display: flex; flex-direction: column; }
+.fsbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; background: #111821; border-bottom: 1px solid #243041; flex-wrap: wrap; }
+.fstitle { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.fsbtns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fs .btn { background: #1a2330; color: #dfe6ee; border-color: #2c3a4c; }
+.fs .btn:hover { background: #223044; border-color: #3b4d63; }
+.fs .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fssep { width: 1px; height: 22px; background: #2c3a4c; margin: 0 4px; }
+.fszoom { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.fscheck { font-size: 12.5px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.fsmain { flex: 1; position: relative; overflow: hidden; }
+.fsmain canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+.fshint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(47, 211, 107, .92); color: #04110a;
+  font-weight: 700; padding: 6px 14px; border-radius: 999px; pointer-events: none; font-size: 13.5px; }
+.fsfoot { display: flex; gap: 18px; align-items: center; padding: 6px 12px; background: #111821; border-top: 1px solid #243041;
+  font-size: 12.5px; font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+.fscursor { color: #9fb0c3; min-width: 120px; }
+.fshelp { color: #7d8ea2; margin-left: auto; }
 
 /* dialog + toast */
 .dlg { border: 0; border-radius: 12px; padding: 22px 24px; box-shadow: 0 20px 50px rgba(0,0,0,.25); max-width: 420px; }

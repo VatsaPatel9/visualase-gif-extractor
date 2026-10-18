@@ -4,7 +4,7 @@ import itertools
 import numpy as np
 from scipy import ndimage
 
-from .glyphs import TEMPLATES, DIGITS, STATUS_CHARS, find_glyphs
+from .glyphs import TEMPLATES, DIGITS, STATUS_CHARS, find_glyphs, find_relaxed, read_line
 
 PANEL = 256
 LEGEND_RE = re.compile(r'^(\d+)\s+(-?\d+\.\d|--\.-)\s+<(\d+)$')
@@ -135,37 +135,93 @@ def _resolve_cluster(mag, comp, expected):
     return None
 
 
-def analyze_frame(a):
+LEGEND_LOOSE_RE = re.compile(r'^(\d+)\s+(-?\d+\.\d|--\.-)\s+<(\d{2,3})(?![\d])')
+
+
+def _legend_lines(mask, lines):
+    """Legend lines ("<label>  <temp> <<limit>") among grouped glyph runs of one colour.
+
+    A run that starts like a legend line but fails the strict parse (e.g. its "<90" runs over bright
+    image pixels) is re-read cell by cell with a tolerant matcher. Returns [(y, x0, label, temp, limit, cells)].
+    """
+    out = []
+    for y, x0, s, items in lines:
+        m = LEGEND_RE.match(s)
+        cells = [(y, xx, ch) for xx, ch in items]
+        if not m and re.match(r'^\d+\s+[-\d]', s):
+            txt = read_line(mask, y, x0)
+            m = LEGEND_LOOSE_RE.match(txt)
+            if m:
+                cells = [(y, x0 + 6 * k, ch) for k, ch in enumerate(txt[:m.end()]) if ch in TEMPLATES]
+        if m:
+            temp = m.group(2)
+            out.append((y, x0, int(m.group(1)), None if '-' in temp else float(temp), int(m.group(3)), cells))
+    return out
+
+
+def _pick(cands, hint, max_dist=25):
+    """Choose one label placement: nearest to where the point was last seen, else the only candidate."""
+    if not cands:
+        return None
+    if hint is not None:
+        d = [((y - hint[0]) ** 2 + (x - hint[1]) ** 2) ** 0.5 for y, x in cands]
+        k = min(range(len(cands)), key=d.__getitem__)
+        return cands[k] if d[k] <= max_dist else None
+    return cands[0] if len(cands) == 1 else None
+
+
+def analyze_frame(a, hints=None):
     """OCR one RGB frame (H x W x 3 int array).
+
+    hints: optional {panel_row: {label: (y, x)}} - where each point label was seen in earlier frames;
+           used to place labels that cannot be told apart from the image on their own.
 
     Returns (status_dict, panels) where panels maps panel row -> {
         'legend': {label: (temp or None, limit)},
         'markers': {label: [(y, x, how), ...]}   # glyph cell top-left, image coords
+        'alarm': {label, ...}                    # points drawn in white (reading over its limit)
         'notes': [...]
     } for the left (temperature) column of panels.
+
+    Visualase draws point numbers and legend lines in magenta, and switches a point to white while its
+    reading is over its limit, so both colours are read.
     """
+    hints = hints or {}
     mag, white = color_masks(a)
     status = read_status(white)
-    hits = find_glyphs(mag)
-    lines = group_lines(hits)
+    H, W = mag.shape
+    # white text of interest lives in the left column, above the status line
+    wl = white.copy()
+    wl[max(0, H - 14):, :] = False
+    wl[:, PANEL:] = False
     panels = {}
 
     def panel(y, x):
-        return panels.setdefault(y // PANEL, {'legend': {}, 'markers': {}, 'notes': []}) if x < PANEL else None
+        if x >= PANEL:
+            return None
+        return panels.setdefault(y // PANEL, {'legend': {}, 'markers': {}, 'alarm': set(), 'notes': []})
 
-    used = np.zeros_like(mag)
-    for y, x0, s, items in lines:
-        m = LEGEND_RE.match(s)
-        if m:
+    lines = {'magenta': group_lines(find_glyphs(mag)), 'white': group_lines(find_glyphs(wl))}
+    used = {'magenta': np.zeros_like(mag), 'white': np.zeros_like(mag)}
+    legend_boxes = []
+    for color, mask in (('magenta', mag), ('white', wl)):
+        for y, x0, lab, temp, lim, cells in _legend_lines(mask, lines[color]):
             p = panel(y, x0)
-            if p is not None:
-                temp = m.group(2)
-                p['legend'][int(m.group(1))] = (None if '-' in temp else float(temp), int(m.group(3)))
-            used |= _glyph_mask(mag.shape, [(y, xx, ch) for xx, ch in items])
-        elif len(s.replace(' ', '')) >= 3:          # other overlay text, e.g. the study ID
-            used |= _glyph_mask(mag.shape, [(y, xx, ch) for xx, ch in items])
-    for y, x0, s, items in lines:
-        if LEGEND_RE.match(s) or len(s.replace(' ', '')) >= 3:
+            if p is None:
+                continue
+            p['legend'][lab] = (temp, lim)
+            if color == 'white':
+                p['alarm'].add(lab)
+            used[color] |= _glyph_mask(mag.shape, cells)
+            legend_boxes.append((y - 1, y + 11, x0 - 1, cells[-1][1] + 6))
+
+    def in_legend(y, x):
+        return any(y0 <= y + 9 and y <= y1 and x0 <= x + 4 and x <= x1 for y0, y1, x0, x1 in legend_boxes)
+
+    # magenta single-digit point labels
+    for y, x0, s, items in lines['magenta']:
+        if len(s.replace(' ', '')) >= 3 or in_legend(y, x0):
+            used['magenta'] |= _glyph_mask(mag.shape, [(y, xx, ch) for xx, ch in items])   # other text, e.g. study ID
             continue
         for xx, ch in items:
             if ch not in DIGITS or ch == '0':
@@ -173,21 +229,58 @@ def analyze_frame(a):
             p = panel(y, xx)
             if p is not None:
                 p['markers'].setdefault(int(ch), []).append((y, xx, 'exact'))
-            used |= _glyph_mask(mag.shape, [(y, xx, ch)])
-    rest = mag & ~used
-    lab, n = ndimage.label(rest, structure=np.ones((3, 3)))
-    for i, sl in enumerate(ndimage.find_objects(lab), start=1):
-        comp = lab == i
+            used['magenta'] |= _glyph_mask(mag.shape, [(y, xx, ch)])
+    # overlapping magenta labels
+    rest = mag & ~used['magenta']
+    lab_img, _ = ndimage.label(rest, structure=np.ones((3, 3)))
+    for i, sl in enumerate(ndimage.find_objects(lab_img), start=1):
+        comp = lab_img == i
         if comp.sum() < 6:
             continue
         p = panel(sl[0].start, sl[1].start)
         if p is None:
             continue
-        expected = {str(k) for k in p['legend'] if k not in p['markers']}
+        expected = {str(k) for k in p['legend'] if k not in p['markers'] and k not in p['alarm']}
         res = _resolve_cluster(mag, comp, expected)
         if res:
             for y, x, ch in res:
                 p['markers'].setdefault(int(ch), []).append((y, x, 'overlap'))
         else:
             p['notes'].append(f'unresolved label pixels near x={sl[1].start}, y={sl[0].start % PANEL}')
+    # white (over-limit) point labels: exact shape with at most 1 stray white pixel in the cell
+    free = wl & ~used['white']
+    for row, p in panels.items():
+        for lab in sorted(p['alarm']):
+            if lab in p['markers'] or not 1 <= lab <= 9:
+                continue
+            hint = hints.get(row, {}).get(lab)
+            cands = [(y, x) for y, x, extra in find_relaxed(free, str(lab), max_extra=1)
+                     if y // PANEL == row and not in_legend(y, x)]
+            got = _pick(cands, hint)
+            if got is None and hint is not None:
+                got = _match_near(free, str(lab), hint, in_legend)
+            if got:
+                p['markers'][lab] = [(got[0], got[1], 'white')]
     return status, panels
+
+
+def _match_near(mask, ch, hint, in_legend, radius=20, max_miss=2, max_extra=4):
+    """Tolerant search for a label close to where it was last seen: a few glyph pixels may be covered
+    by thermal-map colour and a few bright image pixels may touch it. Best (fewest misses, then fewest
+    extras, then nearest) placement wins."""
+    t = TEMPLATES[ch]
+    H, W = mask.shape
+    best = None
+    for y in range(max(0, hint[0] - radius), min(H - 10, hint[0] + radius) + 1):
+        for x in range(max(0, hint[1] - radius), min(W - 5, hint[1] + radius) + 1):
+            cell = mask[y:y + 10, x:x + 5]
+            miss = int((t & ~cell).sum())
+            if miss > max_miss:
+                continue
+            extra = int((cell & ~t).sum())
+            if extra > max_extra or in_legend(y, x):
+                continue
+            score = (miss * 2 + extra, (y - hint[0]) ** 2 + (x - hint[1]) ** 2)
+            if best is None or score < best[0]:
+                best = (score, (y, x))
+    return best[1] if best else None
